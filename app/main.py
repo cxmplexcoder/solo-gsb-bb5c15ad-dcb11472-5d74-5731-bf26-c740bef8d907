@@ -17,6 +17,7 @@ from . import (
     coverage_gaps,
     db,
     experiments,
+    import_impact,
     ingest,
     review_groups,
     review_replay,
@@ -231,6 +232,27 @@ def load_sample(conn: db.sqlite3.Connection = Depends(get_conn),
     rows = ingest.parse_csv(sample.read_bytes())
     summary = ingest.add_many(conn, rows)
     return summary
+
+
+@app.get("/api/addresses/preview/{token}/impact")
+def preview_impact(token: str,
+                   conn: db.sqlite3.Connection = Depends(get_conn),
+                   settings: Settings = Depends(settings_dep)) -> dict[str, Any]:
+    """导入影响预演：对按日志时间倒序取出的最近 100 个不同原始查询，分别用
+    当前标准地址表与「当前表 + 本次有效待导入行」的内存临时合并表，沿现有
+    匹配评分与复核共识逻辑各重跑一次，逐条给出前后状态与自动命中目标的
+    改善 / 退化 / 目标改派 / 无变化分类并汇总。
+
+    服务端校验预览凭证仍在有效期内、且其绑定的地址表快照与当前表一致；
+    无效行与重复行不参与，临时地址只存在于内存中（以 CSV 行号标识），
+    预演不写入地址表，也不写入或改动任何匹配日志。
+    """
+    try:
+        return import_impact.compute_impact(conn, settings, token)
+    except import_impact.ImpactPreviewExpired as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except import_impact.ImpactTableChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # --- matching ---------------------------------------------------------------

@@ -443,3 +443,54 @@ th { color: var(--muted); font-weight: 600; }
 .audit-best b { color: var(--primary); }
 .audit-blockers { margin-top: 8px; }
 .audit-blocker-meta { margin: 8px 0 2px; }
+
+/* ============================================ import impact preview panel */
+
+.impact-panel {
+    margin-top: 12px; padding: 12px 14px;
+    border: 1px solid var(--line); border-radius: 10px;
+    background: #f8faff;
+}
+.impact-head-row {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    justify-content: space-between; gap: 8px;
+}
+.impact-title { font-weight: 700; font-size: 14px; }
+.impact-filterbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+.impact-filter { background: var(--gray-bg); color: var(--ink); }
+.impact-filter.active { outline: 2px solid var(--primary); }
+.impact-item {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; margin-top: 10px; background: var(--card);
+}
+.impact-item.improved { border-left: 4px solid var(--green); }
+.impact-item.regressed { border-left: 4px solid var(--red); }
+.impact-item.retargeted { border-left: 4px solid var(--purple); }
+.impact-item.unchanged { border-left: 4px solid var(--line); }
+.impact-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.impact-cat {
+    display: inline-block; padding: 3px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.impact-cat.improved { background: var(--green-bg); color: var(--green); }
+.impact-cat.regressed { background: var(--red-bg); color: var(--red); }
+.impact-cat.retargeted { background: var(--purple-bg); color: var(--purple); }
+.impact-cat.unchanged { background: var(--gray-bg); color: var(--muted); }
+.impact-query { font-weight: 600; word-break: break-all; }
+.impact-meta { margin: 6px 0; word-break: break-all; }
+.impact-beforeafter {
+    display: flex; align-items: flex-start; gap: 10px;
+    margin: 8px 0; flex-wrap: wrap;
+}
+.impact-side { flex: 1 1 260px; font-size: 13px; word-break: break-all; }
+.impact-arrow { color: var(--muted); font-size: 16px; padding-top: 18px; }
+.impact-reason { font-size: 13px; color: var(--ink); margin: 6px 0; word-break: break-all; }
+.impact-new-addr { color: var(--green); font-weight: 700; }
+.impact-consensus {
+    display: inline-block; font-size: 12px; font-weight: 600;
+    background: var(--green-bg); color: var(--green);
+    border-radius: 999px; padding: 1px 8px;
+}
+.impact-details > summary {
+    cursor: pointer; font-size: 13px; color: var(--primary);
+}

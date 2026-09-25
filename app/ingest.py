@@ -100,8 +100,14 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _persist_planned_row(conn: sqlite3.Connection, planned: PlannedRow) -> int:
-    """Insert a row already classified as valid (no further dedup check)."""
+def planned_address_fields(planned: PlannedRow) -> dict[str, Any]:
+    """Normalise a ``valid`` planned row into the exact keyword values
+    ``db.insert_address`` would be called with at confirm time.
+
+    Shared by the transactional import and the in-memory import-impact
+    preview, so the temporary addresses are built from the same
+    normalisation as the rows the real import writes.
+    """
     norm_row = normalize_row(planned.row)
     normalized = normalize_parts(
         line1=norm_row.get("line1") if not norm_row.get("full_text") else None,
@@ -113,16 +119,20 @@ def _persist_planned_row(conn: sqlite3.Connection, planned: PlannedRow) -> int:
     )
     fields = {key: norm_row.get(key) for key in _ADDRESS_KEYS}
     fields["external_id"] = norm_row.get("external_id")
-    return db.insert_address(
-        conn,
-        full_text=norm_row["full_text"],
-        tokens=normalized.tokens,
-        street_tokens=normalized.street_tokens,
-        locality_tokens=normalized.locality_tokens,
-        house=normalized.house,
-        fields=fields,
-        raw=norm_row,
-    )
+    return {
+        "full_text": norm_row["full_text"],
+        "tokens": normalized.tokens,
+        "street_tokens": normalized.street_tokens,
+        "locality_tokens": normalized.locality_tokens,
+        "house": normalized.house,
+        "fields": fields,
+        "raw": norm_row,
+    }
+
+
+def _persist_planned_row(conn: sqlite3.Connection, planned: PlannedRow) -> int:
+    """Insert a row already classified as valid (no further dedup check)."""
+    return db.insert_address(conn, **planned_address_fields(planned))
 
 
 def add_address(conn: sqlite3.Connection, raw: dict[str, Any],

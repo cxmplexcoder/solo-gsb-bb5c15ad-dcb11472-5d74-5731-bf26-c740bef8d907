@@ -368,6 +368,13 @@ function renderPreview(data) {
             服务器将拒绝写入，需要重新预览。
         </p>
         <div class="row">
+            <button id="btn-csv-impact" class="ghost"${data.valid === 0 ? " disabled" : ""}>
+                🔮 预演本次导入对最近查询的影响
+            </button>
+            <span id="csv-impact-msg"></span>
+        </div>
+        <div id="csv-impact-panel" class="impact-panel hidden"></div>
+        <div class="row">
             <button id="btn-csv-confirm" class="primary"${data.valid === 0 ? " disabled" : ""}>
                 确认写入 ${data.valid} 条有效记录
             </button>
@@ -486,7 +493,161 @@ $("#csv-preview-panel").addEventListener("click", async (event) => {
     }
 });
 
-// ------------------------------------------------------------- review queue
+// ----------------------------------------------------- import impact preview
+
+const IMPACT_CATEGORIES = [
+    { key: "improved", label: "改善" },
+    { key: "regressed", label: "退化" },
+    { key: "retargeted", label: "目标改派" },
+    { key: "unchanged", label: "无变化" },
+];
+const IMPACT_CATEGORY_LABEL = Object.fromEntries(
+    IMPACT_CATEGORIES.map((c) => [c.key, c.label]));
+
+// Latest impact response and the active category filter ("all" = none).
+let impactData = null;
+let impactFilter = "all";
+
+function impactTargetLine(view) {
+    const status = `<span class="status ${view.status}">${STATUS_LABEL[view.status] || view.status}</span>`;
+    let target;
+    if (view.best_id === null || view.best_id === undefined) {
+        target = '<span class="muted">无自动命中目标</span>';
+    } else if (view.best_is_new) {
+        target = `<span class="impact-new-addr">🆕 CSV 第 ${view.best_csv_line} 行新地址</span>` +
+            `<span class="muted">（${escapeHtml(view.best_full_text || "")} · ${pct(view.best_score)}）</span>`;
+    } else {
+        target = `<b>#${view.best_id}</b> ` +
+            `<span class="muted">${escapeHtml(view.best_full_text || "")} · ${pct(view.best_score)}</span>`;
+    }
+    const consensus = view.consensus_applied
+        ? '<span class="impact-consensus" title="经复核共识自动指向">✅ 共识</span>' : "";
+    return `<div>${status} ${consensus} → ${target}</div>`;
+}
+
+function renderImpactItem(item) {
+    const before = item.before;
+    const after = item.after;
+    // New temporary addresses may appear in either candidate set; ribbon them.
+    const ribbonFor = (match) => {
+        const best = match.best_id;
+        const bestCand = (match.candidates || []).find((c) => c.address.id === best);
+        if (bestCand && bestCand.address.is_new) {
+            return { id: best, label: `CSV 第 ${bestCand.address.csv_line} 行新地址` };
+        }
+        return null;
+    };
+    const candidates = (after.match.candidates || [])
+        .map((c, i) => renderCandidate(c, i, { targetRibbon: ribbonFor(after.match) }))
+        .join("");
+    return `
+    <div class="impact-item ${item.category}">
+        <div class="impact-head">
+            <span class="impact-cat ${item.category}">${IMPACT_CATEGORY_LABEL[item.category] || item.category}</span>
+            <span class="impact-query">🔍 ${escapeHtml(item.query)}</span>
+        </div>
+        <div class="impact-meta muted">
+            最近记录 #${item.last_match_id} · 日志时间 ${escapeHtml(item.last_seen_at || "")}
+        </div>
+        <div class="impact-beforeafter">
+            <div class="impact-side">
+                <span class="muted">导入前</span>
+                ${impactTargetLine(before)}
+            </div>
+            <div class="impact-arrow">→</div>
+            <div class="impact-side">
+                <span class="muted">导入后（临时合并表，仅内存）</span>
+                ${impactTargetLine(after)}
+            </div>
+        </div>
+        <div class="impact-reason">${escapeHtml(item.reason)}</div>
+        <details class="impact-details">
+            <summary>导入后候选明细（${(after.match.candidates || []).length}）</summary>
+            ${candidates || '<div class="meta muted">无候选</div>'}
+        </details>
+    </div>`;
+}
+
+function renderImpact() {
+    const data = impactData;
+    if (!data) return;
+    const panel = $("#csv-impact-panel");
+    const newLines = (data.new_addresses || [])
+        .map((a) => `第 ${a.csv_line} 行`)
+        .join("、");
+    const filterBtn = (key, label, count) => `
+        <button class="tiny impact-filter${impactFilter === key ? " active" : ""}" data-cat="${key}">
+            ${label} ${count}</button>`;
+    const filtered = impactFilter === "all"
+        ? data.items
+        : data.items.filter((it) => it.category === impactFilter);
+    panel.innerHTML = `
+        <div class="impact-head-row">
+            <span class="impact-title">🔮 导入影响预演</span>
+            <span class="muted">最近 ${data.total_queries} / ${data.query_limit} 个不同原始查询
+                · 预演时间 ${escapeHtml(data.generated_at)}</span>
+        </div>
+        <p class="hint">
+            两次重跑都使用当前默认规则与复核共识记忆；临时地址仅在内存中参与评分
+            （${escapeHtml(newLines || "无")}，共 ${data.new_address_count} 条），
+            预演<b>不写入地址表与匹配日志</b>。
+        </p>
+        <div class="impact-filterbar">
+            ${filterBtn("all", "全部", data.total_queries)}
+            ${IMPACT_CATEGORIES.map((c) => filterBtn(c.key, c.label, data[c.key])).join("")}
+        </div>
+        <div id="impact-items">${
+            filtered.length
+                ? filtered.map(renderImpactItem).join("")
+                : '<p class="muted">当前筛选条件下没有查询。</p>'
+        }</div>`;
+    panel.classList.remove("hidden");
+}
+
+async function loadImpact() {
+    if (!pendingToken) return;
+    const panel = $("#csv-impact-panel");
+    const msg = $("#csv-impact-msg");
+    panel.classList.remove("hidden");
+    panel.innerHTML = '<p class="muted">正在用当前表与临时合并表重跑最近查询…</p>';
+    impactData = null;
+    impactFilter = "all";
+    try {
+        const res = await fetch(
+            `/api/addresses/preview/${encodeURIComponent(pendingToken)}/impact`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            // Expired voucher (404) or stale table snapshot (409): re-preview.
+            panel.classList.add("hidden");
+            panel.innerHTML = "";
+            msg.innerHTML =
+                `<span class="err-msg">${escapeHtml(data.detail || "预演失败")}，` +
+                `请点击「重新预览」后再预演。</span>`;
+            $("#btn-csv-confirm").classList.add("hidden");
+            $("#btn-csv-repreview").classList.remove("hidden");
+            return;
+        }
+        msg.innerHTML = "";
+        impactData = data;
+        renderImpact();
+    } catch (err) {
+        panel.classList.add("hidden");
+        panel.innerHTML = "";
+        msg.innerHTML = `<span class="err-msg">${escapeHtml(err.message)}</span>`;
+    }
+}
+
+$("#csv-preview-panel").addEventListener("click", (event) => {
+    if (event.target.closest("#btn-csv-impact")) {
+        loadImpact();
+        return;
+    }
+    const filterBtn = event.target.closest(".impact-filter");
+    if (filterBtn) {
+        impactFilter = filterBtn.dataset.cat;
+        renderImpact();
+    }
+});
 
 async function loadReview() {
     const status = $("#review-filter").value;
