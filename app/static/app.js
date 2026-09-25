@@ -365,16 +365,21 @@ function renderPreview(data) {
         <div class="preview-lines">无效行（CSV 物理行号，表头为第 1 行）：${escapeHtml(lines)}</div>
         <p class="hint">
             确认时需重新上传同一文件；若文件内容或标准地址表在预览后发生变化，
-            服务器将拒绝写入，需要重新预览。
+            服务器将拒绝写入，需要重新预览。可先做<b>导入影响预演</b>：用本次有效行
+            对最近 100 条不同查询做内存干跑（不写入任何数据）。
         </p>
         <div class="row">
             <button id="btn-csv-confirm" class="primary"${data.valid === 0 ? " disabled" : ""}>
                 确认写入 ${data.valid} 条有效记录
             </button>
+            <button id="btn-csv-impact" class="ghost"${data.valid === 0 ? " disabled" : ""}>
+                🔬 影响预演
+            </button>
             <button id="btn-csv-cancel" class="ghost">取消</button>
             <button id="btn-csv-repreview" class="ghost hidden">重新预览</button>
             <span id="csv-confirm-msg"></span>
-        </div>`;
+        </div>
+        <div id="csv-impact-panel" class="impact-panel hidden"></div>`;
     $("#csv-preview-panel").classList.remove("hidden");
 }
 
@@ -440,6 +445,10 @@ $("#csv-preview-panel").addEventListener("click", async (event) => {
         if (pendingFile) await createPreview(pendingFile);
         return;
     }
+    if (event.target.closest("#btn-csv-impact")) {
+        await loadImpact();
+        return;
+    }
     const confirmBtn = event.target.closest("#btn-csv-confirm");
     if (!confirmBtn) return;
 
@@ -485,6 +494,100 @@ $("#csv-preview-panel").addEventListener("click", async (event) => {
         confirmBtn.disabled = false;
     }
 });
+
+// ------------------------------------------------- import impact dry-run
+
+const IMPACT_CATEGORY_LABEL = {
+    improved: "改善",
+    regressed: "退化",
+    retargeted: "目标改派",
+    unchanged: "不变",
+};
+
+function impactTargetText(target) {
+    if (!target) return "无自动命中目标";
+    if (target.kind === "new") return `CSV 第 ${target.csv_line} 行「${target.full_text}」`;
+    return `#${target.id}「${target.full_text}」`;
+}
+
+function renderImpactVerdict(label, verdict) {
+    const target = verdict.target
+        ? `${escapeHtml(impactTargetText(verdict.target))}（综合 ${pct(verdict.score)}）`
+        : "无自动命中目标";
+    return `
+    <div class="impact-verdict">
+        <span class="impact-side">${label}</span>
+        <span class="status ${verdict.status}">${STATUS_LABEL[verdict.status] || verdict.status}</span>
+        ${verdict.consensus_applied ? '<span class="impact-consensus" title="复核共识命中改指">共识</span>' : ""}
+        <span class="muted">${target}</span>
+    </div>`;
+}
+
+function renderImpact(data) {
+    const s = data.summary;
+    const newAddr = data.new_addresses.map((a) =>
+        `<span class="impact-new-chip">第 ${a.csv_line} 行 · ${escapeHtml(a.full_text)}</span>`
+    ).join("");
+    const items = data.items.map((it) => `
+        <div class="impact-item">
+            <div class="impact-head">
+                <span class="impact-cat ${it.category}">${IMPACT_CATEGORY_LABEL[it.category] || it.category}</span>
+                <span class="impact-query">🔍 ${escapeHtml(it.query)}</span>
+                <span class="muted">最近记录 #${it.latest_match_id}</span>
+            </div>
+            <div class="impact-verdicts">
+                ${renderImpactVerdict("导入前", it.before)}
+                <span class="impact-arrow">→</span>
+                ${renderImpactVerdict("导入后（预演）", it.after)}
+            </div>
+            <div class="impact-reason">判定：${escapeHtml(it.reason)}</div>
+        </div>`).join("");
+    $("#csv-impact-panel").innerHTML = `
+        <div class="impact-summary">
+            <span class="impact-cat improved">改善 ${s.improved}</span>
+            <span class="impact-cat regressed">退化 ${s.regressed}</span>
+            <span class="impact-cat retargeted">目标改派 ${s.retargeted}</span>
+            <span class="impact-cat unchanged">不变 ${s.unchanged}</span>
+            <span class="muted">共预演 ${s.total} 条不同查询（按日志时间倒序，上限 ${data.query_limit} 条）
+                · ${escapeHtml(data.generated_at)}</span>
+        </div>
+        <div class="impact-new">
+            <div class="muted">参与预演的 ${data.valid_rows} 条有效新地址（以 CSV 行号标识；无效及重复行不参与）：</div>
+            <div class="impact-new-chips">${newAddr || '<span class="muted">无</span>'}</div>
+        </div>
+        ${items || '<p class="muted">暂无匹配日志可供预演；产生匹配记录后即可查看本次导入的影响。</p>'}
+        <p class="hint">预演仅在内存中进行，不写入地址和匹配日志；确认导入仍走原有文件校验与事务。</p>`;
+}
+
+async function loadImpact() {
+    const panel = $("#csv-impact-panel");
+    panel.classList.remove("hidden");
+    panel.innerHTML = '<p class="muted">正在用最近 100 条不同查询预演本次导入的影响…</p>';
+    const btn = $("#btn-csv-impact");
+    btn.disabled = true;
+    try {
+        const res = await fetch(
+            `/api/addresses/preview/${encodeURIComponent(pendingToken || "")}/impact`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            // 404（凭证不存在/过期）或 409（地址表已变化）：凭证不可用，需重新预览。
+            panel.innerHTML =
+                `<p class="err-msg">${escapeHtml(data.detail || "预演失败")}，` +
+                `请点击「重新预览」。</p>`;
+            if (res.status === 404 || res.status === 409) {
+                $("#btn-csv-confirm").classList.add("hidden");
+                $("#btn-csv-impact").classList.add("hidden");
+                $("#btn-csv-repreview").classList.remove("hidden");
+            }
+            return;
+        }
+        renderImpact(data);
+    } catch (err) {
+        panel.innerHTML = `<p class="err-msg">${escapeHtml(err.message)}</p>`;
+    } finally {
+        btn.disabled = false;
+    }
+}
 
 // ------------------------------------------------------------- review queue
 

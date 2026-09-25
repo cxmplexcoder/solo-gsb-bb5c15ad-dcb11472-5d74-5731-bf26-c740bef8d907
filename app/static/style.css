@@ -115,6 +115,48 @@ button.reject { background: var(--red-bg); color: var(--red); }
 .pv-chip.invalid { background: var(--red-bg); color: var(--red); }
 .preview-lines { font-size: 13px; color: var(--ink); margin-bottom: 6px; word-break: break-all; }
 
+/* ============================================== import impact dry-run */
+
+.impact-panel { margin-top: 12px; }
+.impact-summary {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 8px 12px; border-radius: 8px;
+    background: var(--gray-bg); font-size: 13px;
+}
+.impact-cat {
+    display: inline-block; padding: 3px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.impact-cat.improved { background: var(--green-bg); color: var(--green); }
+.impact-cat.regressed { background: var(--red-bg); color: var(--red); }
+.impact-cat.retargeted { background: var(--purple-bg); color: var(--purple); }
+.impact-cat.unchanged { background: var(--gray-bg); color: var(--muted); }
+.impact-new { margin: 10px 0 4px; }
+.impact-new-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.impact-new-chip {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: var(--green-bg); color: var(--green); font-weight: 600;
+}
+.impact-item {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; margin-top: 10px;
+}
+.impact-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.impact-query { font-weight: 600; word-break: break-all; }
+.impact-verdicts {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    margin: 8px 0 4px;
+}
+.impact-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.impact-verdict .status { margin-bottom: 0; }
+.impact-side { font-size: 12px; color: var(--muted); font-weight: 600; }
+.impact-arrow { color: var(--muted); font-weight: 700; }
+.impact-consensus {
+    font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px;
+    background: var(--green-bg); color: var(--green);
+}
+.impact-reason { font-size: 13px; margin-top: 4px; word-break: break-all; }
+
 .result {
     background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; padding: 16px 20px; margin-bottom: 14px;

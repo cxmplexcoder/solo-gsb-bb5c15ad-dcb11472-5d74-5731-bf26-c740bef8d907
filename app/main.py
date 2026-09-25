@@ -17,6 +17,7 @@ from . import (
     coverage_gaps,
     db,
     experiments,
+    import_impact,
     ingest,
     review_groups,
     review_replay,
@@ -200,6 +201,26 @@ async def preview_csv(file: UploadFile = File(...),
     content = await file.read()
     _read_csv(file, content)
     return ingest.preview_csv(conn, content, file.filename)
+
+
+@app.get("/api/addresses/preview/{token}/impact")
+def preview_impact(token: str,
+                   conn: db.sqlite3.Connection = Depends(get_conn),
+                   settings: Settings = Depends(settings_dep)) -> dict[str, Any]:
+    """导入影响预演：对预览凭证中的有效待导入行做内存干跑。
+
+    服务端校验凭证未过期且地址表快照未变，用与正式导入相同的行规范化生成
+    临时地址（以 CSV 行号标识），分别用当前地址表与临时合并表，沿现有匹配
+    及复核共识逻辑重跑按日志时间倒序取出的最近 100 个不同原始查询；逐条
+    对比前后状态与自动命中目标，分类为 改善 / 退化 / 目标改派 / 不变 并汇总。
+    无效及重复行不参与；预演不写入地址和匹配日志，凭证保持有效。
+    """
+    try:
+        return import_impact.compute_impact(conn, settings, token)
+    except ingest.PreviewExpired as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ingest.PreviewTableChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/addresses/confirm")

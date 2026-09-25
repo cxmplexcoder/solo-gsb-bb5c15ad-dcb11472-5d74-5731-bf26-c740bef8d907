@@ -100,9 +100,14 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _persist_planned_row(conn: sqlite3.Connection, planned: PlannedRow) -> int:
-    """Insert a row already classified as valid (no further dedup check)."""
-    norm_row = normalize_row(planned.row)
+def normalize_for_insert(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalise one raw row exactly as the importer does.
+
+    Returns the keyword bundle accepted by ``db.insert_address``; the import
+    impact dry-run builds its in-memory temporary addresses from the same
+    bundle, so the rehearsal always matches what a real confirm would write.
+    """
+    norm_row = normalize_row(raw)
     normalized = normalize_parts(
         line1=norm_row.get("line1") if not norm_row.get("full_text") else None,
         city=norm_row.get("city"),
@@ -113,16 +118,20 @@ def _persist_planned_row(conn: sqlite3.Connection, planned: PlannedRow) -> int:
     )
     fields = {key: norm_row.get(key) for key in _ADDRESS_KEYS}
     fields["external_id"] = norm_row.get("external_id")
-    return db.insert_address(
-        conn,
-        full_text=norm_row["full_text"],
-        tokens=normalized.tokens,
-        street_tokens=normalized.street_tokens,
-        locality_tokens=normalized.locality_tokens,
-        house=normalized.house,
-        fields=fields,
-        raw=norm_row,
-    )
+    return {
+        "full_text": norm_row["full_text"],
+        "tokens": normalized.tokens,
+        "street_tokens": normalized.street_tokens,
+        "locality_tokens": normalized.locality_tokens,
+        "house": normalized.house,
+        "fields": fields,
+        "raw": norm_row,
+    }
+
+
+def _persist_planned_row(conn: sqlite3.Connection, planned: PlannedRow) -> int:
+    """Insert a row already classified as valid (no further dedup check)."""
+    return db.insert_address(conn, **normalize_for_insert(planned.row))
 
 
 def add_address(conn: sqlite3.Connection, raw: dict[str, Any],

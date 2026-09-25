@@ -7,6 +7,7 @@
 可复核结果。
 
 - 🌐 网页界面：单条/批量匹配、**规则 A/B 对照实验**、上传标准地址 CSV、待确认队列人工复核（含同案合并复核、复核共识记忆）、**地址覆盖缺口清单**
+- 🔬 **导入影响预演**：CSV 预览确认前，把本次**有效待导入行**按正式导入的同款行规范化生成临时地址（以 CSV 行号标识、只在内存中），对**按日志时间倒序取出的最近 100 个不同原始查询**，分别用当前地址表与临时合并表沿现有匹配及复核共识逻辑重跑，逐条对比前后状态与自动命中目标，按 **改善 / 退化 / 目标改派 / 不变** 分类汇总；无效及重复行不参与，预演不写入地址和匹配日志，确认导入仍走原有文件校验与事务
 - 🕳️ **地址覆盖缺口**：从已保存且状态为 `no_match` 的匹配日志生成缺口清单，按归一化后的**道路词元 + 地区词元 + 门牌号**归组（门牌号不同不算同一缺口），展示出现次数、原始查询示例与最近出现时间；每次打开清单都用**当前标准地址表与默认规则**重跑每组代表查询——现已能自动命中的组标为**已覆盖**并显示命中地址，其余标为**待补录**并显示当前首选候选，避免上传地址后仍把旧拒绝记录当作未解决。支持待补录 / 已覆盖筛选，全程只读、不写日志
 - 🩺 **标准地址自匹配巡检**：对当前表每条标准地址，以其全文作为查询、按默认规则在**完整地址表**上重新评分，只列出**未能自动命中自身 ID** 的记录。每条风险给出自身分数与所有得分不低于「自身分数 − 默认分差阈值」的其他地址（阻碍候选，**不受前五候选截断**），并按 **自身分数不足 / 首选偏移 / 分差歧义** 分类汇总；上传新表后刷新即重新计算，全程只读、不写日志
 - 🔁 **复核结论回放**：取全部已复核记录，以原查询在**当前标准地址表**上按**默认规则**重新匹配，逐条对照人工结论——确认/改派记录自动命中所选地址为**一致**、命中其他地址为**冲突**、未自动命中为**漏命中**，判无匹配记录出现自动命中为**误命中**。单条复核与同案组复核写入时会**持久保存所选地址的 ID 与全文快照**（普通列、非外键，地址删除也不消失），回放始终展示原 ID、全文与复核得分，并用当前地址表标注所选地址是否已删除；历史记录若在外键置空前已失去可确定的所选 ID，则明确标记为**原选择未知（unknown）**，绝不从候选列表猜测。返回各类数量、原结论、当前首选与得分，支持按类别筛选，全程只读、不写日志也不改动复核记录
@@ -30,15 +31,18 @@ docker compose up --build
 
 | 入口 | 地址 |
 | --- | --- |
-| 网页界面（默认「单条 / 批量匹配」，标签页内含「复核回放」「地址覆盖缺口」「自匹配巡检」等页面） | http://localhost:8000 |
+| 网页界面（默认「单条 / 批量匹配」，标签页内含「复核回放」「地址覆盖缺口」「自匹配巡检」等页面；「标准地址表」页的 CSV 预览面板内含「影响预演」入口） | http://localhost:8000 |
 | 复核结论回放 API | http://localhost:8000/api/review-replay |
 | 标准地址自匹配巡检 API | http://localhost:8000/api/address-audit |
+| 导入影响预演 API（`{token}` 为预览凭证） | http://localhost:8000/api/addresses/preview/{token}/impact |
 | REST API 文档（Swagger） | http://localhost:8000/docs |
 | 健康检查 | http://localhost:8000/api/health |
 
 打开 **http://localhost:8000** 后，点击顶部 **「地址覆盖缺口」** 标签即可查看缺口清单，
 点击 **「自匹配巡检」** 标签即可查看标准地址自匹配巡检结果，
-点击 **「复核回放」** 标签即可查看复核结论回放对照。
+点击 **「复核回放」** 标签即可查看复核结论回放对照；
+在 **「标准地址表」** 标签页选择 CSV 生成预览后，点击预览面板中的 **「🔬 影响预演」**
+即可查看本次导入对最近日志查询的影响。
 
 - **端口**：`8000`（在 `docker-compose.yml` 的 `ports` 中修改）
 - 首次启动会自动加载内置示例标准地址（`sample_data/standard_addresses.csv`，共 15 条，含中英文地址）
@@ -121,7 +125,10 @@ curl -s -X POST http://localhost:8000/api/addresses/preview \
 # => {"preview_token":"...","valid":15,"duplicates":0,"invalid":0,
 #     "invalid_lines":[],"total":15,"filename":"..."}
 
-# 2) 确认：必须再次提交文件，并带上预览凭证
+# 2) （可选）导入影响预演：GET，无需重新上传文件
+curl -s http://localhost:8000/api/addresses/preview/上一步返回的token/impact
+
+# 3) 确认：必须再次提交文件，并带上预览凭证
 curl -s -X POST http://localhost:8000/api/addresses/confirm \
   -F 'file=@sample_data/standard_addresses.csv' \
   -F 'preview_token=上一步返回的 token'
@@ -135,6 +142,59 @@ curl -s -X POST http://localhost:8000/api/addresses/confirm \
   需要重新调用预览接口；
 - 确认成功后凭证立即失效（一次性），且仅写入该次预览中分类为「有效」的记录；
 - 「标准地址表」页默认勾选「上传前先预览确认」；取消勾选则继续使用直接上传接口。
+
+---
+
+## 导入影响预演
+
+预览之后、确认之前，可以先回答一个问题：**这批新地址写进去，会改变哪些已有查询的
+判定？**「导入影响预演」用预览凭证中的**有效待导入行**做一次纯内存干跑：
+
+- **临时合并表**：有效行按**与正式导入完全相同的行规范化**（`ingest.normalize_for_insert`）
+  生成临时地址，追加在当前地址表快照之后组成合并表；临时地址不写入数据库，
+  以 **CSV 行号**标识（如「CSV 第 2 行」）。**无效及重复行不参与**。
+- **预演对象**：匹配日志中**按日志时间倒序取出的最近 100 个不同原始查询**
+  （同一查询的重复日志只保留最近一次）。
+- **双跑对比**：每条查询分别用**当前地址表**与**临时合并表**，沿现有匹配 +
+  **复核共识**逻辑（与 `/api/match` 相同）各重跑一遍，对比前后状态与自动命中目标：
+
+  | 分类 | 判定 |
+  | --- | --- |
+  | 改善 `improved` | 状态上升（按 无匹配 < 待确认 < 自动命中 的等级比较） |
+  | 退化 `regressed` | 状态下降 |
+  | 目标改派 `retargeted` | 两次均自动命中，但自动命中目标不同 |
+  | 不变 `unchanged` | 其余情况 |
+
+- **校验**：令牌不存在或已过期返回 `404`，地址表在预览后发生变化返回 `409`；
+  预演**不消耗凭证**，之后仍可正常确认导入（确认仍走原有的文件摘要/快照校验与
+  单事务写入）。
+- **只读**：预演只在内存中重跑评分与共识判定，**不写入地址和匹配日志**。
+- **页面入口**：「标准地址表」标签页上传 CSV 生成预览后，点击预览面板中的
+  **「🔬 影响预演」**；结果按 退化 → 目标改派 → 改善 → 不变 排序（风险优先），
+  顶部汇总四类数量与参与预演的新地址清单。
+
+```bash
+# 影响预演（GET，token 来自 POST /api/addresses/preview）
+curl -s http://localhost:8000/api/addresses/preview/<preview_token>/impact
+# => {"filename":"s.csv","valid_rows":2,"query_limit":100,"query_count":100,
+#     "new_addresses":[{"csv_line":2,"full_text":"76 Impossible Crescent",
+#                       "house":"76","external_id":"SMK-1"}],
+#     "summary":{"total":100,"improved":3,"regressed":1,"retargeted":0,"unchanged":96},
+#     "items":[{
+#       "query":"76 Impossible Crescent, Nowhereville","latest_match_id":87,
+#       "before":{"status":"no_match","score":0.21,"target":null,
+#                 "consensus_applied":false},
+#       "after":{"status":"auto_matched","score":1.0,
+#                "target":{"kind":"new","csv_line":2,
+#                          "full_text":"76 Impossible Crescent"},
+#                "consensus_applied":false},
+#       "category":"improved","category_label":"改善",
+#       "reason":"状态改善：无匹配 → 自动命中（导入后目标：CSV 第 2 行「…」）"}]}
+```
+
+自动命中目标中，`kind` 为 `existing` 时表示现有地址（带数据库 `id`），为 `new`
+时表示本次待导入的新地址（带 `csv_line`）；非自动命中的状态没有自动命中目标，
+`target` 为 `null`。
 
 ---
 
@@ -596,6 +656,7 @@ curl -s 'http://localhost:8000/api/review-replay?category=conflict'
 | POST | `/api/addresses` | JSON 批量写入标准地址 |
 | POST | `/api/addresses/upload` | 上传 CSV（multipart，直接写入，跳过重复） |
 | POST | `/api/addresses/preview` | 上传 CSV 生成预览凭证：有效/重复/无效数量 + 无效行号（不写入） |
+| GET | `/api/addresses/preview/{token}/impact` | 导入影响预演：校验凭证（不存在/过期 404、地址表已变化 409），用有效行按正式导入同款规范化生成临时地址（CSV 行号标识），对按日志时间倒序的最近 100 个不同原始查询，分别用当前表与临时合并表沿匹配 + 复核共识逻辑重跑，按 改善(improved)/退化(regressed)/目标改派(retargeted)/不变(unchanged) 分类汇总；无效及重复行不参与，只读不写 |
 | POST | `/api/addresses/confirm` | 重新提交文件 + `preview_token`，事务内校验摘要/快照后仅写入有效记录 |
 | POST | `/api/addresses/load-sample` | 重新加载内置示例数据 |
 | POST | `/api/match` | 单条地址匹配（评分后应用复核共识记忆，返回 `consensus` 判定） |
@@ -659,7 +720,8 @@ curl -s 'http://localhost:8000/api/review-replay?category=conflict'
 │   ├── review_replay.py   # 复核结论回放：已复核记录按当前表/默认规则重跑并对照分类（只读）
 │   ├── coverage_gaps.py   # 地址覆盖缺口：no_match 日志归组 + 当前表/默认规则实时重跑（只读）
 │   ├── address_audit.py   # 标准地址自匹配巡检：每条记录以自身全文重评全表，列出未命中自身的风险（只读）
-│   ├── ingest.py          # CSV / JSON 标准地址导入
+│   ├── ingest.py          # CSV / JSON 标准地址导入（含预览凭证与确认事务）
+│   ├── import_impact.py   # 导入影响预演：有效待导入行对最近日志查询的内存干跑（只读）
 │   ├── schemas.py         # Pydantic 模型
 │   ├── templates/         # 网页（Jinja2，单页）
 │   └── static/            # 前端 CSS / JS（原生 JS，无构建步骤）
